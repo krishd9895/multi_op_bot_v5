@@ -80,7 +80,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 MONGODB_URI = os.getenv('MONGODB_URI')
 DB_NAME = os.getenv('DB_NAME', 'TD')
-OWNER_ID = os.getenv('OWNER_ID')
+OWNER_ID = os.getenv('OWNER_ID') # Replace with the actual owner user_id
 USER_TIMEOUT = 60
 
 # Daily schedule times (IST)
@@ -1317,11 +1317,12 @@ class TourDiaryBot:
 
         # Check if daily prompt was already sent today
         for user_id, msg_info in self.daily_prompt_message_ids.items():
-            if isinstance(msg_info, dict) and msg_info.get('date') == current_date:
-                logger.info(f"Daily prompt already sent today for user {user_id}")
-                continue
+            if user_id == user['user_id']:  # Check if this user already has a prompt
+                if isinstance(msg_info, dict) and msg_info.get('date') == current_date:
+                    logger.info(f"Daily prompt already sent today for user {user['user_id']}")
+                    continue
 
-        users = users_collection.find({'villages': {'$exists': True, '$ne': []}})
+        users = users_collection.find({'villages': {'$exists': True, '$ne': []}})  #Recreate the cursor
         user_count = users_collection.count_documents({'villages': {'$exists': True, '$ne': []}})
         logger.info(f"🔍 Found {user_count} users with villages configured")
         for user in users:
@@ -1668,7 +1669,15 @@ class TourDiaryBot:
                 # Delete the daily prompt message if it exists
                 if user['user_id'] in self.daily_prompt_message_ids:
                     try:
-                        self.bot.delete_message(user['user_id'], self.daily_prompt_message_ids[user['user_id']])
+                        msg_info = self.daily_prompt_message_ids[user['user_id']]
+                        if isinstance(msg_info, dict):
+                            message_id = msg_info['message_id']
+                        else:
+                            # Handle legacy format where only message_id was stored
+                            message_id = msg_info
+
+                        self.bot.delete_message(user['user_id'], message_id)
+
                         logger.info(f"🗑️ Deleted daily prompt message for user {user['user_id']}")
                         del self.daily_prompt_message_ids[user['user_id']]
                     except Exception as e:
