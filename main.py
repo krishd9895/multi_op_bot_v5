@@ -21,7 +21,6 @@ from calendar import monthrange
 from datetime import date as dt_date
 from webserver import keep_alive
 
-
 # Custom file handler that limits lines to 6000
 class LimitedLinesFileHandler(logging.FileHandler):
     def __init__(self, filename, max_lines=6000, mode='a', encoding=None, delay=False):
@@ -78,10 +77,10 @@ class LimitedLinesFileHandler(logging.FileHandler):
 logger = logging.getLogger(__name__)
 
 # Configuration
-BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
-MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+MONGODB_URI = os.getenv('MONGODB_URI')
 DB_NAME = os.getenv('DB_NAME', 'TD')
-OWNER_ID = os.getenv('OWNER_ID') # Replace with the actual owner user_id
+OWNER_ID = os.getenv('OWNER_ID')
 USER_TIMEOUT = 60
 
 # Daily schedule times (IST)
@@ -1331,6 +1330,21 @@ class TourDiaryBot:
                 logger.info(f"👤 Processing user {user['user_id']} for daily prompt")
 
                 # Migrate to new structure if needed
+                # Check if it's a user-defined public holiday today
+                is_user_holiday = False
+                for h in user.get('public_holidays', []):
+                    try:
+                        if datetime.strptime(h['date'], '%d/%m/%Y').date() == current_time.date():
+                            is_user_holiday = True
+                            logger.info(f"📅 User {user['user_id']} - Skipping daily prompt (user holiday: {h['desc']})")
+                            break
+                    except Exception:
+                        continue
+
+                if is_user_holiday:
+                    logger.info(f"📅 Skipping daily prompt for user {user['user_id']} because today is a user-defined public holiday.")
+                    continue
+
                 self.migrate_activities_structure(user['user_id'])
 
                 # Check if activity exists using new structure
@@ -1763,7 +1777,7 @@ class TourDiaryBot:
         @self.bot.message_handler(commands=['logs'])
         def send_logs(message):
             user_id = message.from_user.id
-            if user_id != OWNER_ID:
+            if str(user_id) != str(OWNER_ID):
                 self.bot.reply_to(message, "❌ You are not authorized to access logs.")
                 return
             try:
@@ -2530,6 +2544,7 @@ class TourDiaryBot:
                         help_text,
                         call.message.chat.id,
                         call.message.message_id,
+                    disable_web_page_preview=True,
                         reply_markup=keyboard,
                         parse_mode='Markdown'
                     )
