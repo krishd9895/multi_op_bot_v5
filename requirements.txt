@@ -1,0 +1,7 @@
+pandas
+pymongo
+pytz
+pyTelegramBotAPI
+schedule
+openpyxl
+flask
