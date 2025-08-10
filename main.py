@@ -1718,8 +1718,6 @@ class TourDiaryBot:
                     purpose_str = f"Public holiday ({holiday_name})"
                 elif current_time.weekday() == 6:
                     purpose_str = "Public holiday (Sunday)"
-                elif current_time.weekday() == 5 and current_time.date() == second_saturday.date():
-                    purpose_str = "Public holiday (Second Saturday)"
                 else:
                     purpose_str = "Public holiday"
 
@@ -1773,46 +1771,46 @@ class TourDiaryBot:
                         continue
 
                     # Try to get holiday name from user's public_holidays
-                holiday_name = None
-                for h in user.get('public_holidays', []):
-                    try:
-                        if datetime.strptime(h['date'], '%d/%m/%Y').date() == current_time.date():
-                            holiday_name = h['desc']
-                            break
-                    except Exception:
-                        continue
+                    holiday_name = None
+                    for h in user.get('public_holidays', []):
+                        try:
+                            if datetime.strptime(h['date'], '%d/%m/%Y').date() == current_time.date():
+                                holiday_name = h['desc']
+                                break
+                        except Exception:
+                            continue
 
-                if holiday_name:
-                    purpose_str = f"Public holiday ({holiday_name})"
-                elif current_time.weekday() == 6:
-                    purpose_str = "Public holiday (Sunday)"
-                elif current_time.weekday() == 5 and current_time.date() == second_saturday.date():
-                    purpose_str = "Public holiday (Second Saturday)"
-                else:
-                    purpose_str = "Public holiday"
+                    if holiday_name:
+                        purpose_str = f"Public holiday ({holiday_name})"
+                    elif current_time.weekday() == 6:
+                        purpose_str = "Public holiday (Sunday)"
+                    elif current_time.weekday() == 5 and current_time.date() == second_saturday.date():
+                        purpose_str = "Public holiday (Second Saturday)"
+                    else:
+                        purpose_str = "Public holiday"
 
-                activity = {
-                    'date': today_str,
-                    'from': user['headquarters'] or 'HQ',
-                    'to_village': '',
-                    'purpose': purpose_str
-                }
+                    activity = {
+                        'date': today_str,
+                        'from': user['headquarters'] or 'HQ',
+                        'to_village': '',
+                        'purpose': purpose_str
+                    }
 
-                # Save using new structure
-                users_collection.update_one(
-                    {'user_id': user['user_id']},
-                    {'$push': {f'activities.{year_str}.{month_str}': activity}}
-                )
-                self.bot.send_message(
-                    user['user_id'],
-                    f"🏖️ **Public Holiday Recorded**\n\n"
-                    f"Today is a public holiday (Second Saturday).\n"
-                    f"**Date:** {activity['date']}\n"
-                    f"**From:** {activity['from']}\n"
-                    f"**To:** {activity['to_village']}\n"
-                    f"**Purpose:** {activity['purpose']}\n",
-                    parse_mode='Markdown'
-                )
+                    # Save using new structure
+                    users_collection.update_one(
+                        {'user_id': user['user_id']},
+                        {'$push': {f'activities.{year_str}.{month_str}': activity}}
+                    )
+                    self.bot.send_message(
+                        user['user_id'],
+                        f"🏖️ **Public Holiday Recorded**\n\n"
+                        f"Today is a public holiday (Second Saturday).\n"
+                        f"**Date:** {activity['date']}\n"
+                        f"**From:** {activity['from']}\n"
+                        f"**To:** {activity['to_village']}\n"
+                        f"**Purpose:** {activity['purpose']}\n",
+                        parse_mode='Markdown'
+                    )
                 return
 
         # Regular weekday default activity
