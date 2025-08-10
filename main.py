@@ -957,87 +957,6 @@ class TourDiaryBot:
         # Remove pending prompt on user response
         self.pending_prompts.pop(user_id, None)
 
-    def download_activities(self, message):
-        """Handle /dnact command"""
-        user_id = message.from_user.id
-        user = users_collection.find_one({'user_id': user_id})
-
-        if not user or not user.get('activities'):
-            self.bot.reply_to(message, "❌ No activities found.")
-            return
-
-        args = message.text.split()[1:] if len(message.text.split()) > 1 else []
-        if len(args) < 2:
-            self.bot.reply_to(
-                message,
-                "❌ Please specify month and year. Usage: /dnact <month_number> <year> (e.g., /dnact 6 2024)"
-            )
-            return
-        try:
-            month_filter = int(args[0])
-            year_filter = int(args[1])
-            if month_filter < 1 or month_filter > 12:
-                raise ValueError
-        except ValueError:
-            self.bot.reply_to(
-                message,
-                "❌ Invalid month or year. Usage: /dnact <month_number> <year> (e.g., /dnact 6 2024)"
-            )
-            return
-
-        # Migrate to new structure if needed
-        self.migrate_activities_structure(user_id)
-
-        # Get activities from new nested structure
-        activities = user.get('activities', {})
-        year_str = str(year_filter)
-        month_str = str(month_filter)
-
-        if year_str not in activities or month_str not in activities[year_str]:
-            self.bot.reply_to(
-                message,
-                f"❌ No activities found for month {month_filter} and year {year_filter}."
-            )
-            return
-
-        activities = activities[year_str][month_str]
-
-        if not activities:
-            self.bot.reply_to(
-                message,
-                f"❌ No activities found for month {month_filter} and year {year_filter}."
-            )
-            return
-
-        # Only count as tour days if to_village is not empty
-        tour_days = sum(1 for act in activities if act.get('to_village', '').strip())
-        min_required = 20
-
-        month_name = calendar.month_name[month_filter]
-        status_msg = f"📊 **{month_name} {year_filter} Tour Summary**\n"
-        status_msg += f"Tour Days: {tour_days}\n"
-        status_msg += f"Required: {min_required}\n"
-        status_msg += (
-            f"⚠️ Short by {min_required - tour_days} days"
-            if tour_days < min_required
-            else "✅ Requirement met"
-        )
-        self.bot.reply_to(message, status_msg, parse_mode='Markdown')
-
-        df = pd.DataFrame(activities)
-        csv_buffer = BytesIO()
-        df.to_csv(csv_buffer, index=False)
-        csv_buffer.seek(0)
-
-        filename = (
-            f"tour_activities_{month_filter}_{year_filter}_"
-            f"{datetime.now(IST).strftime('%Y%m%d')}.csv"
-        )
-        self.bot.send_document(
-            message.chat.id,
-            document=(filename, csv_buffer),
-            caption=f"📋 Tour Activities Report\n{len(activities)} activities exported"
-        )
 
     def settings_command(self, message):
         """Handle /settings command"""
@@ -1994,9 +1913,6 @@ class TourDiaryBot:
         def act(message):
             self.record_activity_command(message)
 
-        @self.bot.message_handler(commands=['dnact'])
-        def dnact(message):
-            self.download_activities(message)
 
         @self.bot.message_handler(commands=['settings'])
         def settings(message):
@@ -2122,8 +2038,24 @@ class TourDiaryBot:
                 if user_id in self.callback_data:
                     del self.callback_data[user_id]
                     logger.info(f"Cleaned up callback_data for user {user_id}")
+                
+                # Store the message ID before clearing input_prompt_message
+                prompt_message_id = None
+                if user_id in self.input_prompt_message:
+                    prompt_message_id = self.input_prompt_message[user_id]
+                    logger.info(f"Storing prompt_message_id {prompt_message_id} for user {user_id} before removal")
+                    del self.input_prompt_message[user_id]
+                
                 self.cancelled_users.add(user_id)  # Mark user as cancelled
-                # Remove the inline keyboard (buttons) after cancelling
+                
+                # Clear any pending next step handlers for this user
+                try:
+                    self.bot.clear_step_handler_by_chat_id(call.message.chat.id)
+                    logger.info(f"Cleared step handlers for user {user_id}")
+                except Exception as e:
+                    logger.error(f"Error clearing step handlers for user {user_id}: {e}")
+                
+                # Try to remove the inline keyboard (buttons) after cancelling
                 try:
                     self.bot.edit_message_reply_markup(
                         call.message.chat.id,
@@ -2132,11 +2064,32 @@ class TourDiaryBot:
                     )
                 except Exception as e:
                     logger.error(f"Error removing inline keyboard after cancel for user {user_id}: {e}")
-                self.bot.edit_message_text(
-                    "❌ Operation cancelled.",
-                    call.message.chat.id,
-                    call.message.message_id
-                )
+                
+                # Try to edit the message text, if it fails, send a new message
+                try:
+                    self.bot.edit_message_text(
+                        "❌ Operation cancelled.",
+                        call.message.chat.id,
+                        call.message.message_id
+                    )
+                    logger.info(f"Successfully edited message text to 'Operation cancelled' for user {user_id}")
+                except Exception as e:
+                    logger.error(f"Error editing message text for cancel for user {user_id}: {e}")
+                    # Send a new message if editing fails
+                    self.bot.send_message(
+                        call.message.chat.id,
+                        "❌ Operation cancelled."
+                    )
+                    logger.info(f"Sent new 'Operation cancelled' message for user {user_id}")
+                
+                # If we have a stored prompt message ID and it's different from the current message,
+                # try to delete it to ensure it doesn't remain on screen
+                if prompt_message_id and prompt_message_id != call.message.message_id:
+                    try:
+                        logger.info(f"Attempting to delete prompt message {prompt_message_id} for user {user_id}")
+                        self.bot.delete_message(call.message.chat.id, prompt_message_id)
+                    except Exception as e:
+                        logger.error(f"Error deleting prompt message for user {user_id}: {e}")
                 return
             # --- Store prompt message_id for input requests sent via edit_message_text ---
             if call.data == 'settings_activities':
@@ -3169,6 +3122,11 @@ class TourDiaryBot:
 
         logger.info(f"User {user_id} initiated /editact command")
 
+        # Clear any previous cancelled state for this user
+        if user_id in self.cancelled_users:
+            self.cancelled_users.remove(user_id)
+            logger.info(f"Cleared cancelled state for user {user_id} in edit_activity_command")
+
         if not user or not user.get('villages'):
             logger.warning(f"User {user_id} has no villages configured")
             self.bot.reply_to(
@@ -3209,9 +3167,11 @@ class TourDiaryBot:
 
     def _editact_date_input_handler(self, message, timeout=USER_TIMEOUT):
         user_id = message.from_user.id
+        # Remove user from cancelled_users regardless of whether they were in it
         if user_id in self.cancelled_users:
             self.cancelled_users.remove(user_id)
-            return
+            # Don't return here, continue processing the date
+            
         date_str = message.text.strip()
         try:
             parsed_date = datetime.strptime(date_str, '%d/%m/%Y')
