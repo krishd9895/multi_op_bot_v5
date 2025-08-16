@@ -80,7 +80,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 MONGODB_URI = os.getenv('MONGODB_URI')
 DB_NAME = os.getenv('DB_NAME', 'TD')
-OWNER_ID = os.getenv('OWNER_ID') # Replace with the actual owner user_id
+OWNER_ID = os.getenv('OWNER_ID') 
 USER_TIMEOUT = 60
 
 # Daily schedule times (IST)
@@ -1604,6 +1604,25 @@ class TourDiaryBot:
         if current_time.weekday() == 6:
             # Sunday: public holiday
             today_str = current_time.strftime('%d/%m/%Y')
+            
+            # First, check if this public holiday is already in the system-wide holidays collection
+            holiday_id = f"sunday_{current_time.strftime('%Y%m%d')}"
+            existing_holiday = config_collection.find_one({'_id': holiday_id})
+            
+            if not existing_holiday:
+                # Add to system holidays collection to prevent duplicate processing
+                config_collection.insert_one({
+                    '_id': holiday_id,
+                    'date': today_str,
+                    'desc': 'Sunday',
+                    'type': 'system',
+                    'processed': False
+                })
+            elif existing_holiday.get('processed', False):
+                # Already processed this holiday
+                logger.info(f"📅 Sunday {today_str} already processed, skipping duplicate notifications")
+                return
+                
             users = users_collection.find({'villages': {'$exists': True, '$ne': []}})
             for user in users:
                 # Migrate to new structure if needed
@@ -1662,6 +1681,12 @@ class TourDiaryBot:
                     f"**Purpose:** {activity['purpose']}\n",
                     parse_mode='Markdown'
                 )
+            
+            # Mark as processed
+            config_collection.update_one(
+                {'_id': holiday_id},
+                {'$set': {'processed': True}}
+            )
             return
         if current_time.weekday() == 5:
             # Check for second Saturday
@@ -1670,6 +1695,25 @@ class TourDiaryBot:
             second_saturday = first_saturday + timedelta(days=7)
             if current_time.date() == second_saturday.date():
                 today_str = current_time.strftime('%d/%m/%Y')
+                
+                # First, check if this public holiday is already in the system-wide holidays collection
+                holiday_id = f"second_saturday_{current_time.strftime('%Y%m%d')}"
+                existing_holiday = config_collection.find_one({'_id': holiday_id})
+                
+                if not existing_holiday:
+                    # Add to system holidays collection to prevent duplicate processing
+                    config_collection.insert_one({
+                        '_id': holiday_id,
+                        'date': today_str,
+                        'desc': 'Second Saturday',
+                        'type': 'system',
+                        'processed': False
+                    })
+                elif existing_holiday.get('processed', False):
+                    # Already processed this holiday
+                    logger.info(f"📅 Second Saturday {today_str} already processed, skipping duplicate notifications")
+                    return
+                    
                 users = users_collection.find({'villages': {'$exists': True, '$ne': []}})
                 for user in users:
                     # Migrate to new structure if needed
@@ -1730,6 +1774,12 @@ class TourDiaryBot:
                         f"**Purpose:** {activity['purpose']}\n",
                         parse_mode='Markdown'
                     )
+                
+                # Mark as processed
+                config_collection.update_one(
+                    {'_id': holiday_id},
+                    {'$set': {'processed': True}}
+                )
                 return
 
         # Regular weekday default activity
@@ -1752,6 +1802,66 @@ class TourDiaryBot:
                     )
 
                 if has_activity:
+                    continue
+                    
+                # Check if it's a user-defined public holiday today
+                is_user_holiday = False
+                holiday_desc = None
+                for h in user.get('public_holidays', []):
+                    try:
+                        if datetime.strptime(h['date'], '%d/%m/%Y').date() == current_time.date():
+                            is_user_holiday = True
+                            holiday_desc = h['desc']
+                            logger.info(f"📅 User {user['user_id']} - Checking user holiday: {h['desc']}")
+                            break
+                    except Exception:
+                        continue
+                
+                if is_user_holiday:
+                    # Check if this holiday has already been processed for this user
+                    holiday_id = f"user_{user['user_id']}_holiday_{current_time.strftime('%Y%m%d')}"
+                    existing_holiday = config_collection.find_one({'_id': holiday_id})
+                    
+                    if not existing_holiday:
+                        # Record the holiday in MongoDB to prevent duplicate processing
+                        config_collection.insert_one({
+                            '_id': holiday_id,
+                            'user_id': user['user_id'],
+                            'date': today_str,
+                            'desc': holiday_desc,
+                            'processed': True
+                        })
+                        
+                        # Also record the holiday in the user's activities
+                        purpose_str = f"Public holiday ({holiday_desc})"
+                        activity = {
+                            'date': today_str,
+                            'from': user['headquarters'] or 'HQ',
+                            'to_village': '',
+                            'purpose': purpose_str
+                        }
+                        
+                        # Save using new structure
+                        users_collection.update_one(
+                            {'user_id': user['user_id']},
+                            {'$push': {f'activities.{year_str}.{month_str}': activity}}
+                        )
+                        
+                        # Send notification to user
+                        self.bot.send_message(
+                            user['user_id'],
+                            f"🏖️ **Public Holiday Recorded**\n\n"
+                            f"Today is a public holiday ({holiday_desc}).\n"
+                            f"**Date:** {activity['date']}\n"
+                            f"**From:** {activity['from']}\n"
+                            f"**To:** {activity['to_village']}\n"
+                            f"**Purpose:** {activity['purpose']}\n",
+                            parse_mode='Markdown'
+                        )
+                        
+                        logger.info(f"📅 Recorded public holiday for user {user['user_id']} because today is a user-defined public holiday: {holiday_desc}")
+                    else:
+                        logger.info(f"📅 Already processed holiday {holiday_desc} for user {user['user_id']} today, skipping duplicate notification.")
                     continue
 
                 # If user has no default_purpose, select a random activity from MAIN_ACTIVITIES_BY_MONTH
@@ -3813,5 +3923,5 @@ reply_markup=keyboard,
 
 keep_alive()
 if __name__ == '__main__':
-    bot = TourDiaryBot()
+    bot = TourDiaryBot()    
     bot.run()
